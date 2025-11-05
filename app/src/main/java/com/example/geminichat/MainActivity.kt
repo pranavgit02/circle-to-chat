@@ -80,6 +80,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import coil.compose.rememberAsyncImagePainter
+import coil.decode.SvgDecoder
+import coil.request.ImageRequest
 import java.io.File
 import java.io.FileOutputStream
 import android.content.pm.PackageManager
@@ -1358,7 +1361,28 @@ fun ChatBubble(message: Message, context: Context) {
     else
         RoundedCornerShape(topEnd = 6.dp, topStart = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
 
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (message.isBot) Arrangement.Start else Arrangement.End) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (message.isBot) Arrangement.Start else Arrangement.End,
+        verticalAlignment = Alignment.Top
+    ) {
+        if (message.isBot) {
+            val logoPainter = rememberAsyncImagePainter(
+                ImageRequest.Builder(context)
+                    .data("file:///android_asset/mirafra_logo.svg")
+                    .decoderFactory(SvgDecoder.Factory())
+                    .build()
+            )
+
+            Image(
+                painter = logoPainter,
+                contentDescription = "Trademark Logo",
+                modifier = Modifier
+                    .size(34.dp)
+                    .padding(top = 1.dp, end = 10.dp)
+            )
+        }
+
         Surface(
             shape = shape,
             color = bubbleColor,
