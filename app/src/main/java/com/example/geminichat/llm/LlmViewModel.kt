@@ -20,6 +20,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.lang.StringBuilder
+import kotlin.math.max
 
 /**
  * Handles LLM state, model downloading, initialization, and inference.
@@ -29,6 +30,19 @@ class LlmViewModel(
     initialModelPath: String,
     private var hfToken: String
 ) : ViewModel() {
+
+    private val STATS = listOf(
+        Stat(id = "time_to_first_token", label = "1st token", unit = "sec"),
+        Stat(id = "prefill_speed", label = "Prefill speed", unit = "tokens/s"),
+        Stat(id = "decode_speed", label = "Decode speed", unit = "tokens/s"),
+        Stat(id = "latency", label = "Latency", unit = "sec"),
+    )
+
+    private val defaultAccelerator = "CPU"
+    private val whitespaceRegex = Regex("\\s+")
+
+    var latestBenchmarkResult by mutableStateOf<ChatMessageBenchmarkLlmResult?>(null)
+        private set
 
     // --- Public State for Composable Functions (used by MainActivity) ---
     var inProgress by mutableStateOf(false)
@@ -476,21 +490,80 @@ class LlmViewModel(
                 LlmModelHelper.resetSession(inst, enableVision = true)
                 val imgs = listOf(bitmap)
 
+                val prefillTokens = max(estimateTokenCount(prompt), 1)
+                var firstRun = true
+                var timeToFirstToken = 0f
+                var firstTokenTs = 0L
+                var decodeTokens = 0
+                var prefillSpeed = 0f
+                var decodeSpeed = 0f
+                val start = System.currentTimeMillis()
+                val modelName = File(currentModelPath).name.ifBlank { currentModelPath.ifBlank { "unknown" } }
+
+                latestBenchmarkResult = null
+
                 // Run inference and stream the result back to the UI
                 LlmModelHelper.runInference(
                     instance = inst,
                     input = prompt,
                     images = imgs,
                     resultListener = { partial, done ->
+                        val curTs = System.currentTimeMillis()
+                        var benchmarkResult: ChatMessageBenchmarkLlmResult? = null
+
+                        if (partial.isNotEmpty()) {
+                            if (firstRun) {
+                                firstTokenTs = curTs
+                                timeToFirstToken = (firstTokenTs - start).coerceAtLeast(0L).toFloat() / 1000f
+                                if (timeToFirstToken > 0f) {
+                                    prefillSpeed = prefillTokens.toFloat() / timeToFirstToken
+                                    if (prefillSpeed.isNaN() || prefillSpeed.isInfinite()) {
+                                        prefillSpeed = 0f
+                                    }
+                                }
+                                firstRun = false
+                            } else {
+                                decodeTokens += max(estimateTokenCount(partial), 1)
+                            }
+                        }
+
+                        if (done) {
+                            val decodeDurationSec = if (firstTokenTs == 0L) 0f else (curTs - firstTokenTs).toFloat() / 1000f
+                            decodeSpeed = if (decodeDurationSec > 0f) decodeTokens / decodeDurationSec else 0f
+                            if (decodeSpeed.isNaN() || decodeSpeed.isInfinite()) {
+                                decodeSpeed = 0f
+                            }
+                            val latencySeconds = (curTs - start).toFloat() / 1000f
+                            benchmarkResult = ChatMessageBenchmarkLlmResult(
+                                orderedStats = STATS,
+                                statValues = mutableMapOf(
+                                    "prefill_speed" to prefillSpeed,
+                                    "decode_speed" to decodeSpeed,
+                                    "time_to_first_token" to timeToFirstToken,
+                                    "latency" to latencySeconds,
+                                ),
+                                running = false,
+                                latencyMs = -1f,
+                                accelerator = defaultAccelerator,
+                            )
+                        }
+
                         viewModelScope.launch(Dispatchers.Main) {
                             response = (response ?: "") + partial // Append the streamed response
                             if (done) {
+                                benchmarkResult?.let {
+                                    updateLastTextMessageLlmBenchmarkResult(
+                                        model = modelName,
+                                        llmBenchmarkResult = it,
+                                        accelerator = defaultAccelerator,
+                                    )
+                                }
                                 inProgress = false
                                 // Call the callback with the final response
                                 response?.let { onResponseComplete?.invoke(it) }
                                 Log.d(
                                     "LlmViewModel",
-                                    "describeImage: completed. Response: $response"
+                                    "describeImage: completed. Response: ${'$'}{response}"
                                 )
                             }
                         }
@@ -503,7 +576,7 @@ class LlmViewModel(
                 withContext(Dispatchers.Main) {
                     error = e.message ?: "Inference error"
                     inProgress = false
-                    Log.e("LlmViewModel", "describeImage: Inference error: ${e.message}")
+                    Log.e("LlmViewModel", "describeImage: Inference error: ${'$'}{e.message}")
                 }
             }
         }
@@ -547,19 +620,81 @@ class LlmViewModel(
                     input
                 }
 
+                val prefillTokens = max(estimateTokenCount(contextualInput), 1)
+                var firstRun = true
+                var timeToFirstToken = 0f
+                var firstTokenTs = 0L
+                var decodeTokens = 0
+                var prefillSpeed = 0f
+                var decodeSpeed = 0f
+                val start = System.currentTimeMillis()
+                val modelName = File(currentModelPath).name.ifBlank { currentModelPath.ifBlank { "unknown" } }
+
+                latestBenchmarkResult = null
+
                 // Run inference and stream the result back to the UI
                 LlmModelHelper.runInference(
                     instance = inst,
                     input = contextualInput,
                     images = emptyList(),
                     resultListener = { partial, done ->
+                        val curTs = System.currentTimeMillis()
+                        var benchmarkResult: ChatMessageBenchmarkLlmResult? = null
+
+                        if (partial.isNotEmpty()) {
+                            if (firstRun) {
+                                firstTokenTs = curTs
+                                timeToFirstToken = (firstTokenTs - start).coerceAtLeast(0L).toFloat() / 1000f
+                                if (timeToFirstToken > 0f) {
+                                    prefillSpeed = prefillTokens.toFloat() / timeToFirstToken
+                                    if (prefillSpeed.isNaN() || prefillSpeed.isInfinite()) {
+                                        prefillSpeed = 0f
+                                    }
+                                }
+                                firstRun = false
+                            } else {
+                                decodeTokens += max(estimateTokenCount(partial), 1)
+                            }
+                        }
+
+                        if (done) {
+                            val decodeDurationSec = if (firstTokenTs == 0L) 0f else (curTs - firstTokenTs).toFloat() / 1000f
+                            decodeSpeed = if (decodeDurationSec > 0f) decodeTokens / decodeDurationSec else 0f
+                            if (decodeSpeed.isNaN() || decodeSpeed.isInfinite()) {
+                                decodeSpeed = 0f
+                            }
+                            val latencySeconds = (curTs - start).toFloat() / 1000f
+                            benchmarkResult = ChatMessageBenchmarkLlmResult(
+                                orderedStats = STATS,
+                                statValues = mutableMapOf(
+                                    "prefill_speed" to prefillSpeed,
+                                    "decode_speed" to decodeSpeed,
+                                    "time_to_first_token" to timeToFirstToken,
+                                    "latency" to latencySeconds,
+                                ),
+                                running = false,
+                                latencyMs = -1f,
+                                accelerator = defaultAccelerator,
+                            )
+                        }
+
                         viewModelScope.launch(Dispatchers.Main) {
                             response = (response ?: "") + partial // Append the streamed response
                             if (done) {
+                                benchmarkResult?.let {
+                                    updateLastTextMessageLlmBenchmarkResult(
+                                        model = modelName,
+                                        llmBenchmarkResult = it,
+                                        accelerator = defaultAccelerator,
+                                    )
+                                }
                                 inProgress = false
                                 // Call the callback with the final response
                                 response?.let { onResponseComplete?.invoke(it) }
-                                Log.d("LlmViewModel", "respondToText: Text response completed. Response: ${response}")
+                                Log.d(
+                                    "LlmViewModel",
+                                    "respondToText: Text response completed. Response: ${'$'}{response}"
+                                )
                             }
                         }
                     },
@@ -571,10 +706,30 @@ class LlmViewModel(
                 withContext(Dispatchers.Main) {
                     error = e.message ?: "Inference error"
                     inProgress = false
-                    Log.e("LlmViewModel", "respondToText: Inference error: ${e.message}")
+                    Log.e("LlmViewModel", "respondToText: Inference error: ${'$'}{e.message}")
                 }
             }
         }
+    }
+
+    fun consumeLatestBenchmarkResult(): ChatMessageBenchmarkLlmResult? {
+        val result = latestBenchmarkResult
+        latestBenchmarkResult = null
+        return result
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun updateLastTextMessageLlmBenchmarkResult(
+        model: String,
+        llmBenchmarkResult: ChatMessageBenchmarkLlmResult,
+        accelerator: String?,
+    ) {
+        latestBenchmarkResult = llmBenchmarkResult
+    }
+
+    private fun estimateTokenCount(text: String): Int {
+        if (text.isBlank()) return 0
+        return text.trim().split(whitespaceRegex).count { it.isNotBlank() }
     }
 
     /**

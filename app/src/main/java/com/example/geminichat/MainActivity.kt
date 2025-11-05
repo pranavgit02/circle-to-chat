@@ -22,6 +22,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -66,6 +68,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,6 +77,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Color as ComposeColor
 import com.example.geminichat.ui.theme.MiraEdgeTheme
+import com.example.geminichat.llm.ChatMessageBenchmarkLlmResult
 import com.example.geminichat.llm.LlmViewModel
 
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -89,6 +94,7 @@ import android.content.pm.PackageManager
 import kotlinx.coroutines.delay
 import kotlin.math.hypot
 import kotlin.math.min
+import java.util.Locale
 
 
 data class Message(
@@ -96,7 +102,8 @@ data class Message(
     val isBot: Boolean,
     val timestamp: Long = System.currentTimeMillis(),
     val imageUri: String? = null,
-    val usedForContext: Boolean = false
+    val usedForContext: Boolean = false,
+    val benchmarkStats: ChatMessageBenchmarkLlmResult? = null,
 )
 
 private val WelcomeMessage = """
@@ -613,6 +620,14 @@ fun ChatScreen(
                                         }
 
                                         messages.add(Message(finalResponse, true))
+
+                                        llmVm.consumeLatestBenchmarkResult()?.let { stats ->
+                                            val lastIndex = messages.lastIndex
+                                            if (lastIndex >= 0 && messages[lastIndex].isBot) {
+                                                messages[lastIndex] =
+                                                    messages[lastIndex].copy(benchmarkStats = stats)
+                                            }
+                                        }
 
                                         // **IMPORTANT**: Clear the error state *after* adding it to the message list
                                         llmVm.clearState()
@@ -1383,68 +1398,179 @@ fun ChatBubble(message: Message, context: Context) {
             )
         }
 
-        Surface(
-            shape = shape,
-            color = bubbleColor,
-            tonalElevation = if (message.isBot) 2.dp else 4.dp,
-            modifier = Modifier
-                .widthIn(max = 260.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                if (message.isBot) {
-                    Text(
-                        text = "Assistant",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-
-                // Display image if available
-                message.imageUri?.let { uriString ->
-                    val bitmap = remember(uriString) {
-                        try {
-                            val uri = Uri.parse(uriString)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                                ImageDecoder.decodeBitmap(source)
-                            } else {
-                                @Suppress("DEPRECATION")
-                                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-                            }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-
-                    if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Attached image",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    } else {
+        Column(horizontalAlignment = if (message.isBot) Alignment.Start else Alignment.End) {
+            Surface(
+                shape = shape,
+                color = bubbleColor,
+                tonalElevation = if (message.isBot) 2.dp else 4.dp,
+                modifier = Modifier
+                    .widthIn(max = 260.dp)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    if (message.isBot) {
                         Text(
-                            text = "[Image could not be loaded]",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
+                            text = "Assistant",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                     }
-                }
 
-                // Display message text
-                if (message.text.isNotBlank()) {
-                    val styledText = remember(message.text) { parseSimpleMarkdown(message.text) }
-                    Text(
-                        text = styledText,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = textColor
-                    )
+                    // Display image if available
+                    message.imageUri?.let { uriString ->
+                        val bitmap = remember(uriString) {
+                            try {
+                                val uri = Uri.parse(uriString)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                    val source = ImageDecoder.createSource(context.contentResolver, uri)
+                                    ImageDecoder.decodeBitmap(source)
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                                }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Attached image",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(160.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        } else {
+                            Text(
+                                text = "[Image could not be loaded]",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                    }
+
+                    // Display message text
+                    if (message.text.isNotBlank()) {
+                        val trimmedText = remember(message.text) { message.text.trimEnd() }
+                        if (trimmedText.isNotBlank()) {
+                            val styledText = remember(trimmedText) { parseSimpleMarkdown(trimmedText) }
+                            Text(
+                                text = styledText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = textColor
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (message.isBot) {
+                message.benchmarkStats?.let { stats ->
+                    var showStats by remember(message.timestamp, stats) { mutableStateOf(false) }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    val latency = String.format(Locale.US, "%.2f", stats.latency)
+                    val firstToken = String.format(Locale.US, "%.2f", stats.timeToFirstToken)
+                    val prefill = String.format(Locale.US, "%.1f", stats.prefillSpeed)
+                    val decode = String.format(Locale.US, "%.1f", stats.decodeSpeed)
+
+                    Row(
+                        modifier = Modifier
+                            .widthIn(max = 260.dp)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$latency s",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        TextButton(
+                            onClick = { showStats = !showStats },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Timer,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (showStats) "Hide stats" else "Show stats",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = showStats,
+                        modifier = Modifier
+                            .widthIn(max = 260.dp)
+                            .padding(top = 8.dp)
+                    ) {
+                        Surface(
+                            tonalElevation = 2.dp,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Stats on CPU",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+
+                                val labelStyle = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold)
+                                val valueStyle = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val statsItems = listOf(
+                                    "1st token" to "$firstToken s",
+                                    "Prefill speed" to "$prefill tok/s",
+                                    "Decode speed" to "$decode tok/s",
+                                    "Latency" to "$latency s"
+                                )
+
+                                statsItems.forEach { (label, value) ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            style = labelStyle,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(end = 12.dp)
+                                        )
+                                        Text(
+                                            text = value,
+                                            style = valueStyle,
+                                            maxLines = 1,
+                                            textAlign = TextAlign.End
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
