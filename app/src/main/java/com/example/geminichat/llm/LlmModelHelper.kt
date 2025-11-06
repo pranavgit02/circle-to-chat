@@ -8,6 +8,7 @@ import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession.LlmInferenceSessionOptions
+import java.util.Locale
 
 /**
  * Data class to hold the MediaPipe LLM engine and its active session.
@@ -34,11 +35,17 @@ object LlmModelHelper {
         modelPath: String,
         maxTokens: Int = 512,
         enableVision: Boolean = true,
+        accelerator: String = "CPU",
     ): Result<LlmModelInstance> = try {
+        val preferredBackend = when (accelerator.uppercase(Locale.US)) {
+            "GPU" -> LlmInference.Backend.GPU
+            else -> LlmInference.Backend.CPU
+        }
         // 1. Configure the LLM Engine
         val engineOptions = LlmInference.LlmInferenceOptions.builder()
             .setModelPath(modelPath)
             .setMaxTokens(maxTokens)
+            .setPreferredBackend(preferredBackend)
             // Configure image handling capability based on the vision flag
             .setMaxNumImages(if (enableVision) 1 else 0)
             .build()

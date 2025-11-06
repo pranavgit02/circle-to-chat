@@ -20,6 +20,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.lang.StringBuilder
+import java.util.Locale
 import kotlin.math.max
 
 /**
@@ -67,6 +68,8 @@ class LlmViewModel(
     var currentModelPath by mutableStateOf(initialModelPath) // Path to the currently used model
     var isModelReady by mutableStateOf(false) // Whether the model is fully initialized and ready
         private set
+    var selectedAccelerator by mutableStateOf(defaultAccelerator)
+        private set
 
     // --- Internal Properties ---
     private val httpClient = OkHttpClient()
@@ -75,8 +78,12 @@ class LlmViewModel(
     private var lastFileName: String? = null
     private var lastToken: String? = null
     private var llmInstance: LlmModelInstance? = null // The actual LLM engine instance
+    private var acceleratorReinitPending = false
 
     init {
+        val prefs = appContext.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+        selectedAccelerator = prefs.getString("selected_accelerator", defaultAccelerator) ?: defaultAccelerator
+
         val initialFile = File(currentModelPath)
         if (isValidModelFile(initialFile)) {
             downloadComplete = true
@@ -86,9 +93,7 @@ class LlmViewModel(
             currentModelPath = ""
         }
 
-        val savedToken = appContext
-            .getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-            .getString("huggingface_token", null)
+        val savedToken = prefs.getString("huggingface_token", null)
         if (!savedToken.isNullOrBlank()) {
             hfToken = savedToken
         }
@@ -111,12 +116,15 @@ class LlmViewModel(
         currentModelPath = modelPath
         needsInitialization = false
 
+        val acceleratorChoice = selectedAccelerator
+
         // Launch initialization on a background thread
         viewModelScope.launch(Dispatchers.Default) {
             val result = LlmModelHelper.initialize(
                 context = appContext,
                 modelPath = modelPath,
                 enableVision = true,
+                accelerator = acceleratorChoice,
             )
             result.onSuccess { inst ->
                 llmInstance = inst
@@ -132,7 +140,10 @@ class LlmViewModel(
                     needsInitialization = true
                 }
             }
-            withContext(Dispatchers.Main) { preparing = false }
+            withContext(Dispatchers.Main) {
+                preparing = false
+                finalizeAcceleratorReinitIfNeeded()
+            }
         }
     }
 
@@ -192,6 +203,57 @@ class LlmViewModel(
             .apply()
     }
 
+    fun updateAccelerator(accelerator: String) {
+        val normalized = accelerator.uppercase(Locale.US)
+        val storedValue = if (normalized == "GPU") "GPU" else defaultAccelerator
+        if (storedValue == selectedAccelerator) return
+        selectedAccelerator = storedValue
+        appContext.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putString("selected_accelerator", storedValue)
+            .apply()
+
+        requestAcceleratorReinitialization()
+    }
+
+    private fun requestAcceleratorReinitialization() {
+        if (currentModelPath.isBlank()) return
+        if (preparing) {
+            acceleratorReinitPending = true
+            return
+        }
+        if (inProgress) {
+            acceleratorReinitPending = true
+            needsInitialization = true
+            return
+        }
+        reinitializeLlmForAcceleratorChange()
+    }
+
+    private fun reinitializeLlmForAcceleratorChange() {
+        acceleratorReinitPending = false
+        needsInitialization = false
+        isModelReady = false
+
+        val instance = llmInstance
+        llmInstance = null
+
+        viewModelScope.launch(Dispatchers.Default) {
+            instance?.let { LlmModelHelper.cleanUp(it) }
+            withContext(Dispatchers.Main) {
+                if (currentModelPath.isNotBlank()) {
+                    initialize(currentModelPath)
+                }
+            }
+        }
+    }
+
+    private fun finalizeAcceleratorReinitIfNeeded() {
+        if (acceleratorReinitPending && !preparing && !inProgress) {
+            reinitializeLlmForAcceleratorChange()
+        }
+    }
+
     /**
      * Attempts to stop the current LLM inference process immediately.
      * This is the core function for the 'Stop' button feature.
@@ -219,11 +281,13 @@ class LlmViewModel(
                 withContext(Dispatchers.Main) {
                     error = "Response generation stopped by user."
                     inProgress = false
+                    finalizeAcceleratorReinitIfNeeded()
                 }
             }
         } ?: run {
             error = "No active model session to cancel."
             inProgress = false
+            finalizeAcceleratorReinitIfNeeded()
         }
     }
 
@@ -469,6 +533,8 @@ class LlmViewModel(
             return
         }
 
+        val acceleratorUsed = selectedAccelerator
+
         // Use user-provided prompt if available, else fallback to default
         val prompt = if (!userPrompt.isNullOrBlank()) {
             userPrompt.trim()
@@ -544,7 +610,7 @@ class LlmViewModel(
                                 ),
                                 running = false,
                                 latencyMs = -1f,
-                                accelerator = defaultAccelerator,
+                                accelerator = acceleratorUsed,
                             )
                         }
 
@@ -555,7 +621,7 @@ class LlmViewModel(
                                     updateLastTextMessageLlmBenchmarkResult(
                                         model = modelName,
                                         llmBenchmarkResult = it,
-                                        accelerator = defaultAccelerator,
+                                        accelerator = acceleratorUsed,
                                     )
                                 }
                                 inProgress = false
@@ -565,6 +631,8 @@ class LlmViewModel(
                                     "LlmViewModel",
                                     "describeImage: completed. Response: ${'$'}{response}"
                                 )
+
+                                finalizeAcceleratorReinitIfNeeded()
                             }
                         }
                     },
@@ -577,6 +645,7 @@ class LlmViewModel(
                     error = e.message ?: "Inference error"
                     inProgress = false
                     Log.e("LlmViewModel", "describeImage: Inference error: ${'$'}{e.message}")
+                    finalizeAcceleratorReinitIfNeeded()
                 }
             }
         }
@@ -592,6 +661,8 @@ class LlmViewModel(
             Log.e("LlmViewModel", "respondToText: llmInstance is null.")
             return
         }
+
+        val acceleratorUsed = selectedAccelerator
 
         viewModelScope.launch(Dispatchers.Default) {
             withContext(Dispatchers.Main) {
@@ -674,7 +745,7 @@ class LlmViewModel(
                                 ),
                                 running = false,
                                 latencyMs = -1f,
-                                accelerator = defaultAccelerator,
+                                accelerator = acceleratorUsed,
                             )
                         }
 
@@ -685,7 +756,7 @@ class LlmViewModel(
                                     updateLastTextMessageLlmBenchmarkResult(
                                         model = modelName,
                                         llmBenchmarkResult = it,
-                                        accelerator = defaultAccelerator,
+                                        accelerator = acceleratorUsed,
                                     )
                                 }
                                 inProgress = false
@@ -695,6 +766,8 @@ class LlmViewModel(
                                     "LlmViewModel",
                                     "respondToText: Text response completed. Response: ${'$'}{response}"
                                 )
+
+                                finalizeAcceleratorReinitIfNeeded()
                             }
                         }
                     },
@@ -707,6 +780,7 @@ class LlmViewModel(
                     error = e.message ?: "Inference error"
                     inProgress = false
                     Log.e("LlmViewModel", "respondToText: Inference error: ${'$'}{e.message}")
+                    finalizeAcceleratorReinitIfNeeded()
                 }
             }
         }

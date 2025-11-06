@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -314,6 +315,7 @@ fun ChatScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            var acceleratorMenuExpanded by remember { mutableStateOf(false) }
             // Model status (Left side)
             val colorScheme = MaterialTheme.colorScheme
             val expectedPath = File(context.filesDir, "llm/gemma-3n-E2B-it-int4.task")
@@ -331,11 +333,57 @@ fun ChatScreen(
                 llmVm.isDownloading || llmVm.preparing || llmVm.downloadComplete || modelFileExists -> colorScheme.secondary
                 else -> colorScheme.error
             }
-            Text(
-                text = modelStatus,
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                color = statusColor
-            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                Box(modifier = Modifier.wrapContentSize(Alignment.TopStart)) {
+                    OutlinedButton(
+                        onClick = { acceleratorMenuExpanded = true },
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = llmVm.selectedAccelerator,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.ArrowDropDown,
+                            contentDescription = null
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = acceleratorMenuExpanded,
+                        onDismissRequest = { acceleratorMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("CPU") },
+                            onClick = {
+                                llmVm.updateAccelerator("CPU")
+                                acceleratorMenuExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("GPU") },
+                            onClick = {
+                                llmVm.updateAccelerator("GPU")
+                                acceleratorMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = modelStatus,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                    color = statusColor
+                )
+            }
 
             // Right side: Group Clear and Settings buttons
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1530,8 +1578,10 @@ fun ChatBubble(message: Message, context: Context) {
                                     .padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                val acceleratorLabel = (stats.accelerator?.ifBlank { null }
+                                    ?: "CPU").uppercase(Locale.US)
                                 Text(
-                                    text = "Stats on CPU",
+                                    text = "Stats on $acceleratorLabel",
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
