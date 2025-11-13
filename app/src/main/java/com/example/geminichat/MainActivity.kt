@@ -1287,60 +1287,53 @@ fun ImageCropScreen(
             )
         }
 
-        // MODIFIED: Button row now includes "Use Full Image" option
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // 1. NEW: Use Full Image Button (Skips crop, sends original bitmap)
-            Button(
-                onClick = {
-                    // Call completion with the original, uncropped image
-                    onCropComplete(imageBitmap)
-                },
-                modifier = Modifier.weight(2f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+            OutlinedButton(
+                onClick = onCancel,
+                modifier = Modifier.size(48.dp),
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(0.dp)
             ) {
-                Text("Use Full Image", fontWeight = FontWeight.Bold)
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back"
+                )
             }
 
-            // 2. Cancel Button (now positioned after "Use Full Image")
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
-                Text("Back", fontWeight = FontWeight.Bold)
-            }
-
-            // 3. Existing Crop Button
             Button(
-                enabled = canCrop,
-                onClick = {
-                    try {
-                        val out = cropCircleFromBitmap(
-                            source = imageBitmap,
-                            imageBoundsInView = imageBounds,
-                            circleCenterInView = center,
-                            circleRadiusInView = radius
-                        )
-                        onCropComplete(out)
-                    } catch (e: Exception) {
-                        // Handle cropping error, e.g., out of memory
-                        android.widget.Toast.makeText(
-                            context,
-                            "Failed to crop image: ${e.localizedMessage ?: "Unknown error"}",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                        onCancel()
-                    }
-                },
-                modifier = Modifier.weight(2.5f)
+                onClick = { onCropComplete(imageBitmap) },
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = if (canCrop) "Crop selected area" else "Adjust circle",
-                    fontWeight = FontWeight.Bold
+                    "Use Full Image",
+                    maxLines = 1
+                )
+            }
+
+            Button(
+                onClick = {
+                    val out = cropCircleFromBitmap(
+                        source = imageBitmap,
+                        imageBoundsInView = imageBounds,
+                        circleCenterInView = center,
+                        circleRadiusInView = radius
+                    )
+                    onCropComplete(out)
+                },
+                enabled = canCrop,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    if (canCrop) "Crop Selected Area" else "Adjust Circle",
+                    maxLines = 1
                 )
             }
         }
