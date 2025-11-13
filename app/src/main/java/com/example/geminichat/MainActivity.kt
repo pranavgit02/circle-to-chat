@@ -449,6 +449,13 @@ fun ChatScreen(
 
         // Chat area with auto-scrolling
         val listState = rememberLazyListState()
+        val isUserAtBottom by remember {
+            derivedStateOf {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                val total = listState.layoutInfo.totalItemsCount - 1
+                lastVisible == total
+            }
+        }
 
         // Combine persisted messages with the current streaming response (if any)
         val streamingResponse = llmVm.response
@@ -520,8 +527,8 @@ fun ChatScreen(
         }
 
         // Auto-scroll to bottom when new items are added
-        LaunchedEffect(allChatItems.size, streamingResponse) {
-            if (allChatItems.isNotEmpty()) {
+        LaunchedEffect(allChatItems.size) {
+            if (isUserAtBottom && allChatItems.isNotEmpty()) {
                 listState.animateScrollToItem(index = allChatItems.size - 1)
             }
         }
