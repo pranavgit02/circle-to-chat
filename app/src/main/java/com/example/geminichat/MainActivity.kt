@@ -84,6 +84,7 @@ import com.example.geminichat.llm.LlmViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import coil.compose.rememberAsyncImagePainter
@@ -95,6 +96,8 @@ import android.content.pm.PackageManager
 import kotlinx.coroutines.delay
 import kotlin.math.hypot
 import kotlin.math.min
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 
@@ -127,6 +130,12 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+private fun createImageFile(context: Context): File {
+    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    val storageDir = context.cacheDir
+    return File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
 }
 
 class MainActivity : ComponentActivity() {
@@ -261,13 +270,30 @@ fun ChatScreen(
     }
 
     var showImagePreview by remember { mutableStateOf(false) }
+    var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
 
     // Camera launcher
     val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
-        if (bitmap != null) {
-            onImageSelected(bitmap)
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            cameraImageUri?.let { uri ->
+                try {
+                    val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val source = ImageDecoder.createSource(context.contentResolver, uri)
+                        ImageDecoder.decodeBitmap(source).copy(Bitmap.Config.ARGB_8888, true)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                            .copy(Bitmap.Config.ARGB_8888, true)
+                    }
+                    onImageSelected(bitmap)
+                } catch (e: Exception) {
+                    // TODO: surface decoding failure to the user
+                } finally {
+                    cameraImageUri = null
+                }
+            }
         }
     }
 
@@ -275,7 +301,14 @@ fun ChatScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            cameraLauncher.launch(null)
+            val imageFile = createImageFile(context)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                imageFile
+            )
+            cameraImageUri = uri
+            cameraLauncher.launch(uri)
         } else {
             showPermissionDeniedDialog = true
         }
@@ -574,7 +607,14 @@ fun ChatScreen(
                                     context,
                                     Manifest.permission.CAMERA
                                 ) == PackageManager.PERMISSION_GRANTED -> {
-                                    cameraLauncher.launch(null)
+                                    val imageFile = createImageFile(context)
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        imageFile
+                                    )
+                                    cameraImageUri = uri
+                                    cameraLauncher.launch(uri)
                                 }
 
                                 activity != null && ActivityCompat.shouldShowRequestPermissionRationale(
